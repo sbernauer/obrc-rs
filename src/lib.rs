@@ -82,7 +82,7 @@ pub fn thread(
     let data = &data[start_idx..end_idx];
 
     let mut last_pos = 0;
-    for next_pos in memchr::memchr_iter(b'\n', &data) {
+    for next_pos in memchr::memchr_iter(b'\n', data) {
         let line = &data[last_pos..next_pos];
         last_pos = next_pos + 1;
         if line.is_empty() {
@@ -176,10 +176,7 @@ pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
     let thread_data: Vec<HashMap<Name, ProcessedStation>> =
         threads.into_iter().map(|t| t.join().unwrap()).collect();
 
-    let mut stations: Vec<_> = merge_stations(thread_data)
-        .into_iter()
-        .map(|(_name, s)| s)
-        .collect();
+    let mut stations: Vec<_> = merge_stations(thread_data).into_values().collect();
 
     stations.sort_unstable_by_key(|s| s.name.clone());
 
@@ -188,7 +185,7 @@ pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
 
 pub fn format_results(stations: &[ProcessedStation]) -> String {
     let mut out = String::new();
-    out.push_str("{");
+    out.push('{');
     for (i, station) in stations.iter().enumerate() {
         use std::fmt::Write;
         let min = station.min as f32 / 10.0;
@@ -203,7 +200,7 @@ pub fn format_results(stations: &[ProcessedStation]) -> String {
         }
     }
 
-    out.push_str("}");
+    out.push('}');
     out
 }
 
