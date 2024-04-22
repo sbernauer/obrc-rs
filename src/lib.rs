@@ -1,11 +1,13 @@
-use fxhash::FxHashMap;
 use memchr::memchr;
 use memmap2::{Advice, Mmap, MmapOptions};
+use ph::fmph::Function;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-pub type HashMap<K, V> = FxHashMap<K, V>;
+use crate::known_cities::KNOWN_CITIES;
+
+mod known_cities;
 
 pub struct ProcessedStation {
     pub name: Vec<u8>,
@@ -14,6 +16,7 @@ pub struct ProcessedStation {
     pub avg_count: usize,
     pub max: i16,
 }
+const NONE_PROCESSED_STATION: Option<ProcessedStation> = None;
 
 pub fn split_file(num_threads: usize, mmap: &Mmap) -> Vec<usize> {
     let mut poses = vec![0];
@@ -75,9 +78,10 @@ pub fn thread(
     data: Arc<Mmap>,
     start_idx: usize,
     end_idx: usize,
-) -> HashMap<Name, ProcessedStation> {
-    let mut stations: HashMap<Name, ProcessedStation> =
-        HashMap::with_capacity_and_hasher(128, Default::default());
+    hasher: Arc<Function>,
+) -> [Option<ProcessedStation>; KNOWN_CITIES.len()] {
+    let mut stations: [Option<ProcessedStation>; KNOWN_CITIES.len()] =
+        [NONE_PROCESSED_STATION; KNOWN_CITIES.len()];
 
     let data = &data[start_idx..end_idx];
 
@@ -96,7 +100,11 @@ pub fn thread(
 
         let temp = parse_fixed_point(temp_str);
 
-        match stations.get_mut(name) {
+        let hash = hasher.get(name).unwrap_or_else(|| {
+            panic!("Station {name:?} must be hash-able, as we know all stations in advance")
+        }) as usize;
+
+        match unsafe { stations.get_unchecked_mut(hash) } {
             Some(station) => {
                 if temp < station.min {
                     station.min = temp;
@@ -109,16 +117,13 @@ pub fn thread(
                 station.avg_count += 1;
             }
             None => {
-                stations.insert(
-                    name.to_owned(),
-                    ProcessedStation {
-                        name: name.to_owned(),
-                        min: temp,
-                        avg_tmp: temp as i64,
-                        avg_count: 1,
-                        max: temp,
-                    },
-                );
+                stations[hash] = Some(ProcessedStation {
+                    name: name.to_owned(),
+                    min: temp,
+                    avg_tmp: temp as i64,
+                    avg_count: 1,
+                    max: temp,
+                });
             }
         }
     }
@@ -127,39 +132,48 @@ pub fn thread(
 }
 
 fn merge_stations(
-    thread_data: Vec<HashMap<Name, ProcessedStation>>,
-) -> HashMap<Name, ProcessedStation> {
-    let mut result: HashMap<Name, ProcessedStation> =
-        HashMap::with_capacity_and_hasher(128, Default::default());
+    thread_data: Vec<[Option<ProcessedStation>; KNOWN_CITIES.len()]>,
+) -> Vec<ProcessedStation> {
+    let mut result: [Option<ProcessedStation>; KNOWN_CITIES.len()] =
+        [NONE_PROCESSED_STATION; KNOWN_CITIES.len()];
 
-    for thread_stations in thread_data {
-        for (_name, s) in thread_stations {
-            match result.get_mut(&s.name) {
-                Some(station) => {
-                    if s.min < station.min {
-                        station.min = s.min;
-                    }
-                    if s.max > station.max {
-                        station.max = s.max;
-                    }
+    for thread_stations in thread_data.into_iter() {
+        for (station_hash, station) in thread_stations.into_iter().enumerate() {
+            if let Some(station) = station {
+                match &mut result[station_hash] {
+                    Some(s) => {
+                        if station.min < s.min {
+                            s.min = station.min;
+                        }
+                        if station.max > s.max {
+                            s.max = station.max;
+                        }
 
-                    station.avg_tmp += s.avg_tmp;
-                    station.avg_count += s.avg_count;
-                }
-                None => {
-                    result.insert(s.name.clone(), s);
+                        s.avg_tmp += station.avg_tmp;
+                        s.avg_count += station.avg_count;
+                    }
+                    None => {
+                        result[station_hash] = Some(station);
+                    }
                 }
             }
         }
     }
 
     result
+        .into_iter()
+        .map(|s| s.expect("All stations should have at least one measurement"))
+        .collect()
 }
 
 pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
     let file = File::open(input_path).unwrap();
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
     let data: Arc<Mmap> = Arc::new(mmap);
+
+    let start = std::time::Instant::now();
+    let hasher = Arc::new(ph::fmph::Function::from(KNOWN_CITIES.as_ref()));
+    println!("Creating hash function took {:?}", start.elapsed());
 
     let num_threads = num_cpus::get();
     let poses = split_file(num_threads, &data);
@@ -169,14 +183,15 @@ pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
             let data = Arc::clone(&data);
             let start = poses[i];
             let end = poses.get(i + 1).cloned().unwrap_or(data.len());
-            std::thread::spawn(move || thread(data, start, end))
+            let hasher = Arc::clone(&hasher);
+            std::thread::spawn(move || thread(data, start, end, hasher))
         })
         .collect();
 
-    let thread_data: Vec<HashMap<Name, ProcessedStation>> =
+    let thread_data: Vec<[Option<ProcessedStation>; KNOWN_CITIES.len()]> =
         threads.into_iter().map(|t| t.join().unwrap()).collect();
 
-    let mut stations: Vec<_> = merge_stations(thread_data).into_values().collect();
+    let mut stations = merge_stations(thread_data);
 
     stations.sort_unstable_by_key(|s| s.name.clone());
 
