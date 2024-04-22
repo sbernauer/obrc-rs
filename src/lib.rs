@@ -208,8 +208,8 @@ pub fn format_results(stations: &[ProcessedStation]) -> String {
 fn validate() {
     use std::time::Instant;
 
-    let input_path = "/home/troy/Java/1brc/measurements.txt";
-    let expected_out_path = "/home/troy/Java/1brc/expected_out.txt";
+    let input_path = "/tmp/measurements.txt";
+    let expected_out_path = "/tmp/expected_out.txt";
     let expected = std::fs::read_to_string(expected_out_path).unwrap();
     let expected = expected.trim();
 

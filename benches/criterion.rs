@@ -9,7 +9,7 @@ fn bench(c: &mut Criterion) {
 
     group.bench_function("one-billion-lines", |b| {
         b.iter(|| {
-            let input_path = "/home/troy/Java/1brc/measurements.txt";
+            let input_path = "/tmp/measurements.txt";
 
             let out = obrc_rs::solution(Path::new(input_path));
             let formatted = obrc_rs::format_results(&out);

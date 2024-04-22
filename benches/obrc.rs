@@ -23,8 +23,8 @@ fn main() {
     let hash = String::from_utf8(hash.stdout).unwrap();
     let hash = hash.trim();
 
-    let input_path = "/home/sbernauer/Desktop/private/1brc/1brc/measurements.txt";
-    let expected_out_path = "/home/sbernauer/Desktop/private/1brc/1brc/expected_out.txt";
+    let input_path = "/tmp/measurements.txt";
+    let expected_out_path = "/tmp/expected_out.txt";
     let expected = std::fs::read_to_string(expected_out_path).unwrap();
     let expected = expected.trim();
 
