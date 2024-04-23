@@ -1,13 +1,10 @@
 use memchr::memchr;
 use memmap2::{Advice, Mmap, MmapOptions};
-use ph::fmph::Function;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::known_cities::KNOWN_CITIES;
-
-mod known_cities;
+include!(concat!(env!("OUT_DIR"), "/known_cities.rs"));
 
 pub struct ProcessedStation {
     pub name: Vec<u8>,
@@ -78,7 +75,6 @@ pub fn thread(
     data: Arc<Mmap>,
     start_idx: usize,
     end_idx: usize,
-    hasher: Arc<Function>,
 ) -> [Option<ProcessedStation>; KNOWN_CITIES.len()] {
     let mut stations: [Option<ProcessedStation>; KNOWN_CITIES.len()] =
         [NONE_PROCESSED_STATION; KNOWN_CITIES.len()];
@@ -100,11 +96,11 @@ pub fn thread(
 
         let temp = parse_fixed_point(temp_str);
 
-        let hash = hasher.get(name).unwrap_or_else(|| {
+        let hash = KNOWN_CITIES_HASHER.get(name).unwrap_or_else(|| {
             panic!("Station {name:?} must be hash-able, as we know all stations in advance")
-        }) as usize;
+        });
 
-        match unsafe { stations.get_unchecked_mut(hash) } {
+        match unsafe { stations.get_unchecked_mut(*hash) } {
             Some(station) => {
                 if temp < station.min {
                     station.min = temp;
@@ -117,13 +113,15 @@ pub fn thread(
                 station.avg_count += 1;
             }
             None => {
-                stations[hash] = Some(ProcessedStation {
-                    name: name.to_owned(),
-                    min: temp,
-                    avg_tmp: temp as i64,
-                    avg_count: 1,
-                    max: temp,
-                });
+                unsafe {
+                    *stations.get_unchecked_mut(*hash) = Some(ProcessedStation {
+                        name: name.to_owned(),
+                        min: temp,
+                        avg_tmp: temp as i64,
+                        avg_count: 1,
+                        max: temp,
+                    })
+                };
             }
         }
     }
@@ -171,10 +169,6 @@ pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
     let data: Arc<Mmap> = Arc::new(mmap);
 
-    let start = std::time::Instant::now();
-    let hasher = Arc::new(ph::fmph::Function::from(KNOWN_CITIES.as_ref()));
-    println!("Creating hash function took {:?}", start.elapsed());
-
     let num_threads = num_cpus::get();
     let poses = split_file(num_threads, &data);
 
@@ -183,8 +177,7 @@ pub fn solution(input_path: &Path) -> Vec<ProcessedStation> {
             let data = Arc::clone(&data);
             let start = poses[i];
             let end = poses.get(i + 1).cloned().unwrap_or(data.len());
-            let hasher = Arc::clone(&hasher);
-            std::thread::spawn(move || thread(data, start, end, hasher))
+            std::thread::spawn(move || thread(data, start, end))
         })
         .collect();
 
